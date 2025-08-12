@@ -130,9 +130,9 @@ You should be thorough, analytical, and provide detailed insights about the code
             structure = await self._scan_project_structure(project_path)
             self.update_progress(0.3)
             
-            # Step 2: Analyze individual files
-            logger.info("Analyzing individual files")
-            file_analyses = await self._analyze_all_files(structure['files'])
+            # Step 2: Analyze individual files using chunked processing
+            logger.info("Analyzing individual files using chunked processing")
+            file_analyses = await self._analyze_all_files_chunked(structure['files'])
             self.update_progress(0.6)
             
             # Step 3: Build dependency map
@@ -257,6 +257,132 @@ You should be thorough, analytical, and provide detailed insights about the code
                 }
         
         return file_analyses
+    
+    async def _analyze_all_files_chunked(self, files: List[str]) -> Dict[str, Any]:
+        """Analyze all files using chunked processing for better performance and error handling."""
+        try:
+            from ..utilities.chunked_processor import ChunkedProcessor, ChunkConfig
+            
+            # Convert file paths to file info format
+            file_infos = []
+            for file_path in files:
+                try:
+                    content = await self._read_file_content(file_path)
+                    file_infos.append({
+                        'file_path': file_path,
+                        'content': content,
+                        'file_type': Path(file_path).suffix.lower()
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to read file {file_path}: {e}")
+                    continue
+            
+            # Configure chunked processing
+            config = ChunkConfig(
+                max_files_per_chunk=5,  # Process 5 files at a time
+                max_tokens_per_chunk=50000,  # Conservative token limit
+                max_parallel_chunks=3,  # Respect rate limits
+                rate_limit_delay=2.0,  # 2 seconds between chunks
+                retry_attempts=3,
+                retry_delay=5.0
+            )
+            
+            processor = ChunkedProcessor(config)
+            
+            # Split files into chunks
+            chunks = await processor.split_project_into_chunks(file_infos)
+            
+            # Process chunks in parallel
+            chunk_results = await processor.process_chunks_parallel(
+                chunks, 
+                self._process_chunk
+            )
+            
+            # Merge results from all chunks
+            merged_results = processor.merge_chunk_results(
+                chunk_results['successful_chunks']
+            )
+            
+            logger.info(f"Chunked processing complete: {len(chunk_results['successful_chunks'])} successful, {len(chunk_results['failed_chunks'])} failed")
+            
+            return merged_results['file_analyses']
+            
+        except Exception as e:
+            logger.error(f"Error in chunked file analysis: {e}")
+            # Fallback to legacy method
+            logger.warning("Falling back to legacy file analysis method")
+            return await self._analyze_all_files(files)
+    
+    async def _process_chunk(self, chunk) -> Dict[str, Any]:
+        """Process a single chunk of files."""
+        try:
+            file_analyses = {}
+            patterns = []
+            dependencies = {}
+            
+            # Define binary file extensions that should be skipped from analysis
+            binary_extensions = {
+                # Images
+                '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff', '.tif',
+                # Videos
+                '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.m4v',
+                # Audio
+                '.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg', '.wma',
+                # Documents
+                '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+                # Archives
+                '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2',
+                # Other binary
+                '.exe', '.dll', '.so', '.dylib', '.bin', '.ttf'
+            }
+            
+            for file_info in chunk.files:
+                file_path = file_info.get('file_path', '')
+                content = file_info.get('content', '')
+                file_ext = Path(file_path).suffix.lower()
+                
+                # Check if file is binary and should be skipped
+                if file_ext in binary_extensions:
+                    file_analyses[file_path] = {
+                        'status': 'skipped',
+                        'reason': f'Binary file ({file_ext}) - will be used as-is',
+                        'file_type': 'binary',
+                        'file_extension': file_ext,
+                        'preserve': True
+                    }
+                    continue
+                
+                # Analyze file
+                analysis = await self._analyze_single_file_content(file_path, content)
+                file_analyses[file_path] = analysis
+                
+                # Extract patterns and dependencies
+                if analysis.get('status') == 'success':
+                    file_patterns = analysis.get('patterns', [])
+                    patterns.extend(file_patterns)
+                    
+                    file_deps = analysis.get('dependencies', {})
+                    for dep_type, deps in file_deps.items():
+                        if dep_type not in dependencies:
+                            dependencies[dep_type] = []
+                        dependencies[dep_type].extend(deps)
+            
+            return {
+                'success': True,
+                'file_analyses': file_analyses,
+                'patterns': patterns,
+                'dependencies': dependencies
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing chunk {chunk.chunk_id}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'file_analyses': {},
+                'patterns': [],
+                'dependencies': {}
+            }
     
     async def _analyze_single_file_content(self, file_path: str, content: str) -> Dict[str, Any]:
         """Analyze a single file's content."""

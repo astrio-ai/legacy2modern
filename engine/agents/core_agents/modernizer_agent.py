@@ -94,7 +94,7 @@ You should focus on creating high-quality, production-ready code that follows mo
             }
     
     async def _perform_full_modernization(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        """Perform full modernization of a project."""
+        """Perform full modernization of a project using chunked processing."""
         try:
             self.state.current_task = "full_modernization"
             self.update_progress(0.1)
@@ -118,9 +118,9 @@ You should focus on creating high-quality, production-ready code that follows mo
             target_stack = self.config.get_target_stack()
             self.update_progress(0.2)
             
-            # Step 1: Generate components based on architecture blueprint
-            logger.info("Generating modern components from architecture blueprint")
-            components = await self._generate_modern_components_from_blueprint(
+            # Step 1: Generate components using chunked processing
+            logger.info("Generating modern components using chunked processing")
+            components = await self._generate_modern_components_chunked(
                 architecture_blueprint, project_map, target_stack
             )
             self.update_progress(0.7)
@@ -145,7 +145,7 @@ You should focus on creating high-quality, production-ready code that follows mo
             return {
                 'success': True,
                 'modernization_result': modernization_result,
-                'message': 'Full modernization completed successfully'
+                'message': 'Full modernization completed successfully using chunked processing'
             }
             
         except Exception as e:
@@ -155,9 +155,114 @@ You should focus on creating high-quality, production-ready code that follows mo
                 'error': str(e)
             }
     
-
+    async def _generate_modern_components_chunked(self, architecture_blueprint: Dict, project_map: Dict, target_stack: str) -> Dict[str, Any]:
+        """Generate modern components using chunked processing for better performance and error handling."""
+        try:
+            from ..utilities.chunked_processor import ChunkedProcessor, ChunkConfig
+            
+            # Extract architecture information
+            folder_structure = architecture_blueprint.get('folderStructure', {})
+            component_mapping = architecture_blueprint.get('mapping', {})
+            routing_structure = architecture_blueprint.get('routing', [])
+            shared_components = architecture_blueprint.get('sharedComponents', [])
+            patterns = architecture_blueprint.get('patterns', [])
+            
+            # Extract project information for content analysis
+            file_analyses = project_map.get('file_analyses', {})
+            
+            # Convert file analyses to chunk format
+            file_infos = []
+            for file_path, analysis in file_analyses.items():
+                if analysis.get('status') == 'success':
+                    file_infos.append({
+                        'file_path': file_path,
+                        'analysis': analysis,
+                        'content': analysis.get('ai_analysis', ''),
+                        'file_type': analysis.get('file_type', 'unknown')
+                    })
+            
+            # Configure chunked processing for modernization
+            config = ChunkConfig(
+                max_files_per_chunk=3,  # Smaller chunks for modernization (more complex)
+                max_tokens_per_chunk=30000,  # Conservative token limit
+                max_parallel_chunks=2,  # Fewer parallel chunks for modernization
+                rate_limit_delay=3.0,  # Longer delay for modernization
+                retry_attempts=3,
+                retry_delay=5.0
+            )
+            
+            processor = ChunkedProcessor(config)
+            
+            # Split files into chunks
+            chunks = await processor.split_project_into_chunks(file_infos)
+            
+            # Process chunks in parallel
+            chunk_results = await processor.process_chunks_parallel(
+                chunks, 
+                lambda chunk: self._process_modernization_chunk(chunk, architecture_blueprint, target_stack)
+            )
+            
+            # Merge results from all chunks
+            all_components = {}
+            for chunk_result in chunk_results['successful_chunks']:
+                chunk_components = chunk_result.get('components', {})
+                all_components.update(chunk_components)
+            
+            logger.info(f"Chunked modernization complete: {len(chunk_results['successful_chunks'])} successful, {len(chunk_results['failed_chunks'])} failed")
+            logger.info(f"Generated {len(all_components)} components")
+            
+            return {
+                'status': 'success',
+                'target_stack': target_stack,
+                'component_files': all_components,
+                'component_list': list(all_components.keys()),
+                'chunk_processing_stats': {
+                    'total_chunks': chunk_results['total_chunks'],
+                    'successful_chunks': len(chunk_results['successful_chunks']),
+                    'failed_chunks': len(chunk_results['failed_chunks']),
+                    'processing_time': chunk_results['processing_time']
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in chunked modernization: {e}")
+            # Fallback to legacy method
+            logger.warning("Falling back to legacy modernization method")
+            return await self._generate_modern_components_from_blueprint(architecture_blueprint, project_map, target_stack)
     
-
+    async def _process_modernization_chunk(self, chunk, architecture_blueprint: Dict, target_stack: str) -> Dict[str, Any]:
+        """Process a single chunk for modernization."""
+        try:
+            components = {}
+            
+            for file_info in chunk.files:
+                file_path = file_info.get('file_path', '')
+                analysis = file_info.get('analysis', {})
+                
+                # Convert file to modern component
+                if file_path.lower().endswith('.html') and analysis.get('is_single_page_multi_section', False):
+                    # Handle HTML files with virtual pages
+                    result = await self._convert_html_with_sections(file_path, analysis, target_stack)
+                    if result.get('status') == 'success':
+                        components.update(result.get('generated_components', {}))
+                else:
+                    # Handle regular files
+                    result = await self._convert_regular_file(file_path, analysis, target_stack)
+                    if result.get('status') == 'success':
+                        components[file_path] = result.get('converted_content', '')
+            
+            return {
+                'success': True,
+                'components': components
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing modernization chunk {chunk.chunk_id}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'components': {}
+            }
     
     async def _generate_modern_components_from_blueprint(self, architecture_blueprint: Dict, project_map: Dict, target_stack: str) -> Dict[str, Any]:
         """Generate modern components based on architecture blueprint."""
@@ -389,10 +494,6 @@ Provide ONLY the clean, runnable code that can be directly saved to the proper d
                 'error': str(e),
                 'status': 'failed'
             }
-    
-
-    
-
     
     def _extract_code_from_response(self, response: str) -> str:
         """Extract actual code content from LLM response, removing markdown and commentary."""
@@ -660,8 +761,6 @@ Provide ONLY the clean, runnable code that can be directly saved to the proper d
             'specs': specs,
             'generated_component': f'// Generated component: {component_name}'
         }
-    
-
     
     async def _convert_single_file(self, task: Dict) -> Dict[str, Any]:
         """Convert a single file task."""
