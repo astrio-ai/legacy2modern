@@ -87,7 +87,7 @@ from engine.agents import (
     AI, BaseAgent, BaseExecutionEnv, ChatToFiles, DiffProcessor,
     FilesDict, GitManager, LintingManager, PrepromptsHolder, ProjectConfig,
     PromptBuilder, TokenUsageTracker, VersionManager, ParserAgent,
-    ModernizerAgent, RefactorAgent, QAAgent, CoordinatorAgent
+    ArchitectAgent, ModernizerAgent, RefactorAgent, QAAgent, CoordinatorAgent
 )
 from engine.agents.core_agents.base_memory import FileMemory
 from engine.agents.core_agents.base_agent import AgentRole
@@ -436,6 +436,7 @@ class Legacy2ModernCLI:
         self.config = None
         self.coordinator = None
         self.parser_agent = None
+        self.architect_agent = None
         self.modernizer_agent = None
         self.refactor_agent = None
         self.qa_agent = None
@@ -484,7 +485,8 @@ class Legacy2ModernCLI:
         """Display helpful tips for getting started."""
         tips = [
             "🤖 Multi-agent modernization system powered by AutoGen",
-            "💡 Use natural language to describe your transformation needs", 
+            "💡 Support for GitHub repos, zip files, and local projects", 
+            "💡 Use natural language to describe your transformation needs",
             "💡 Get AI-powered analysis and optimization suggestions",
             "💡 Coordinate multiple specialized agents for complex tasks",
             "💡 Type /help for more information"
@@ -570,6 +572,12 @@ class Legacy2ModernCLI:
             config=self.config
         )
         
+        self.architect_agent = ArchitectAgent(
+            ai=self.ai,
+            memory=self.memory,
+            config=self.config
+        )
+        
         self.modernizer_agent = ModernizerAgent(
             ai=self.ai,
             memory=self.memory,
@@ -590,6 +598,7 @@ class Legacy2ModernCLI:
         
         # Register agents with coordinator
         await self.coordinator.register_agent(self.parser_agent)
+        await self.coordinator.register_agent(self.architect_agent)
         await self.coordinator.register_agent(self.modernizer_agent)
         await self.coordinator.register_agent(self.refactor_agent)
         await self.coordinator.register_agent(self.qa_agent)
@@ -603,6 +612,7 @@ class Legacy2ModernCLI:
         # Create base agents
         base_agents = {
             "parser": ParserAgent(ai=self.ai, memory=self.memory, config=self.config),
+            "architect": ArchitectAgent(ai=self.ai, memory=self.memory, config=self.config),
             "modernizer": ModernizerAgent(ai=self.ai, memory=self.memory, config=self.config),
             "refactor": RefactorAgent(ai=self.ai, memory=self.memory, config=self.config),
             "qa": QAAgent(ai=self.ai, memory=self.memory, config=self.config),
@@ -681,20 +691,62 @@ class Legacy2ModernCLI:
         
         self.console.print(f"\n[dim]{status_text}[/dim]")
         
-    async def start_modernization_workflow(self, input_path: str, target_stack: str = "react") -> bool:
+    async def start_modernization_workflow(self, input_source: str, target_stack: str = "react") -> bool:
         """Start a modernization workflow using the agents system and sandbox."""
         try:
-            if not os.path.exists(input_path):
-                self.console.print(f"[red]Error: Input path not found: {input_path}[/red]")
+            # Handle various input sources (local files, directories, GitHub repos, zip files)
+            from engine.agents.utilities.repository_handler import RepositoryHandler
+            
+            self.console.print(f"[#00D4AA]Preparing project: {input_source}[/#00D4AA]")
+            
+            # Prepare project using repository handler
+            repo_handler = RepositoryHandler()
+            project_prep = repo_handler.prepare_project(input_source)
+            
+            if not project_prep.get('success', False):
+                self.console.print(f"[red]Error: Failed to prepare project: {project_prep.get('error', 'Unknown error')}[/red]")
                 return False
             
-            # Output to output directory - no user choice
-            project_name = Path(input_path).stem
+            # Get project information
+            project_path = project_prep['project_path']
+            project_type = project_prep['project_type']
+            project_info = project_prep['project_info']
+            
+            # Determine project name for output
+            if project_type == 'github_repository':
+                repo_info = project_prep['repository_info']
+                project_name = f"{repo_info['owner']}-{repo_info['repo']}"
+            elif project_type == 'zip_archive':
+                project_name = project_prep['archive_info']['name'].replace('.zip', '')
+            elif project_type == 'local_file':
+                project_name = project_prep['file_info']['name'].replace('.html', '').replace('.htm', '')
+            elif project_type == 'local_directory':
+                project_name = project_prep['directory_info']['name']
+            else:
+                project_name = "modernized-project"
+            
+            # Output to output directory
             output_dir = f"output/modernized-{project_name}"
             
-            self.console.print(f"[#00D4AA]Modernizing: {input_path}[/#00D4AA]")
+            # Display project information
+            self.console.print(f"[#00D4AA]Project Type: {project_type}[/#00D4AA]")
             self.console.print(f"[#00D4AA]Target Framework: {target_stack}[/#00D4AA]")
             self.console.print(f"[#00D4AA]Output Location: {output_dir}[/#00D4AA]")
+            
+            # Show project summary if available
+            if project_info:
+                summary = repo_handler.get_project_summary(project_info)
+                self.console.print(f"\n[#0053D6]Project Summary:[/#0053D6]")
+                for line in summary.split('\n'):
+                    self.console.print(f"[dim]{line}[/dim]")
+                
+                # Show performance optimization info
+                skipped_dirs = repo_handler.get_skipped_directories()
+                self.console.print(f"\n[#00D4AA]Performance Optimization:[/#00D4AA]")
+                self.console.print(f"[dim]Skipped {len(skipped_dirs)} directories for faster analysis[/dim]")
+                if 'node_modules' in str(project_info.get('structure', {})):
+                    self.console.print(f"[dim]Note: node_modules detected but skipped for performance[/dim]")
+            
             self.console.print()
             
             with Progress(
@@ -714,7 +766,8 @@ class Legacy2ModernCLI:
                 # Step 1: Analyze with ParserAgent
                 analysis_task = {
                     "type": "full_analysis",
-                    "project_path": input_path,
+                    "project_path": project_path,
+                    "input_source": input_source,
                     "description": "Analyze the project structure and create modernization plan"
                 }
                 
@@ -724,15 +777,37 @@ class Legacy2ModernCLI:
                     self.console.print(f"\n[#FF6B6B]❌ Analysis failed: {analysis_result.get('error', 'Unknown error')}[/#FF6B6B]")
                     return False
                 
+                # Show analysis results
+                self.display_analysis_results(analysis_result)
+                
+                progress.update(task, description="Creating architecture blueprint...")
+                
+                # Step 2: Create architecture blueprint with ArchitectAgent
+                architecture_task = {
+                    "type": "full_architecture_design",
+                    "project_path": project_path,
+                    "target_stack": target_stack,
+                    "description": f"Create React architecture blueprint for {target_stack}"
+                }
+                
+                architecture_result = await self.architect_agent.execute_task(architecture_task)
+                
+                if not architecture_result.get('success', False):
+                    self.console.print(f"\n[#FF6B6B]❌ Architecture design failed: {architecture_result.get('error', 'Unknown error')}[/#FF6B6B]")
+                    return False
+                
+                # Show architecture blueprint results
+                self.display_architecture_results(architecture_result)
+                
                 progress.update(task, description="Generating modern code...")
                 
-                # Step 2: Modernize with ModernizerAgent
+                # Step 3: Modernize with ModernizerAgent using architecture blueprint
                 modernization_task = {
                     "type": "full_modernization",
-                    "input_path": input_path,
+                    "input_path": project_path,
                     "output_path": output_dir,
                     "target_stack": target_stack,
-                    "analysis_data": analysis_result.get('project_map', {}),
+                    "architecture_blueprint": architecture_result.get('architecture_blueprint', {}),
                     "description": f"Modernize the project to {target_stack}"
                 }
                 
@@ -741,7 +816,7 @@ class Legacy2ModernCLI:
                 progress.update(task, description="✅ Modernization completed!")
                 
             if modernization_result.get('success', False):
-                self.console.print(f"\n[#0053D6]✅ Successfully modernized: {input_path} → {output_dir}[/#0053D6]")
+                self.console.print(f"\n[#0053D6]✅ Successfully modernized: {input_source} → {output_dir}[/#0053D6]")
                 self.console.print(f"[#0053D6]Framework: {target_stack.upper()}[/#0053D6]")
                 
                 # Write generated files to output directory
@@ -1000,12 +1075,43 @@ class Legacy2ModernCLI:
         except Exception as e:
             self.console.print(f"❌ Error writing files: {e}", style="bold red")
 
-    async def analyze_with_agents(self, input_path: str) -> bool:
+    async def analyze_with_agents(self, input_source: str) -> bool:
         """Analyze a project using the agents system."""
         try:
-            if not os.path.exists(input_path):
-                self.console.print(f"[red]Error: Input path not found: {input_path}[/red]")
+            # Handle various input sources
+            from engine.agents.utilities.repository_handler import RepositoryHandler
+            
+            self.console.print(f"[#00D4AA]Preparing project for analysis: {input_source}[/#00D4AA]")
+            
+            # Prepare project using repository handler
+            repo_handler = RepositoryHandler()
+            project_prep = repo_handler.prepare_project(input_source)
+            
+            if not project_prep.get('success', False):
+                self.console.print(f"[red]Error: Failed to prepare project: {project_prep.get('error', 'Unknown error')}[/red]")
                 return False
+            
+            # Get project information
+            project_path = project_prep['project_path']
+            project_type = project_prep['project_type']
+            project_info = project_prep['project_info']
+            
+            # Display project information
+            self.console.print(f"[#00D4AA]Project Type: {project_type}[/#00D4AA]")
+            
+            # Show project summary if available
+            if project_info:
+                summary = repo_handler.get_project_summary(project_info)
+                self.console.print(f"\n[#0053D6]Project Summary:[/#0053D6]")
+                for line in summary.split('\n'):
+                    self.console.print(f"[dim]{line}[/dim]")
+                
+                # Show performance optimization info
+                skipped_dirs = repo_handler.get_skipped_directories()
+                self.console.print(f"\n[#00D4AA]Performance Optimization:[/#00D4AA]")
+                self.console.print(f"[dim]Skipped {len(skipped_dirs)} directories for faster analysis[/dim]")
+                if 'node_modules' in str(project_info.get('structure', {})):
+                    self.console.print(f"[dim]Note: node_modules detected but skipped for performance[/dim]")
             
             with Progress(
                 SpinnerColumn(),
@@ -1018,7 +1124,8 @@ class Legacy2ModernCLI:
                 # Create analysis task
                 analysis_task = {
                     "type": "full_analysis",
-                    "project_path": input_path,
+                    "project_path": project_path,
+                    "input_source": input_source,
                     "agents": ["parser", "qa"],
                     "analysis_type": "comprehensive"
                 }
@@ -1076,7 +1183,10 @@ class Legacy2ModernCLI:
         if file_analyses:
             successful_analyses = len([f for f in file_analyses.values() if f.get('status') == 'success'])
             failed_analyses = len([f for f in file_analyses.values() if f.get('status') == 'failed'])
+            skipped_analyses = len([f for f in file_analyses.values() if f.get('status') == 'skipped'])
             table.add_row("Successfully Analyzed", str(successful_analyses))
+            if skipped_analyses > 0:
+                table.add_row("Skipped (Binary Files)", str(skipped_analyses))
             if failed_analyses > 0:
                 table.add_row("Failed Analyses", str(failed_analyses))
         
@@ -1118,6 +1228,75 @@ class Legacy2ModernCLI:
                     file_name = file_path.split('/')[-1]
                     content_length = analysis.get('content_length', 0)
                     self.console.print(f"   • {file_name} ({content_length} chars)", style="dim")
+
+    def display_architecture_results(self, result: dict):
+        """Display architecture blueprint results."""
+        if not result.get('success', False):
+            self.console.print(f"❌ Architecture design failed: {result.get('error', 'Unknown error')}", style="bold red")
+            return
+        
+        architecture_blueprint = result.get('architecture_blueprint', {})
+        if not architecture_blueprint:
+            self.console.print("❌ No architecture blueprint available", style="bold red")
+            return
+        
+        # Create architecture table
+        table = Table(title="Architecture Blueprint", show_header=True, header_style="bold magenta")
+        table.add_column("Component", style="cyan", no_wrap=True)
+        table.add_column("Details", style="green")
+        
+        # Folder structure
+        folder_structure = architecture_blueprint.get('folderStructure', {})
+        if folder_structure:
+            src_structure = folder_structure.get('src', {})
+            if src_structure:
+                components = src_structure.get('components', [])
+                pages = src_structure.get('pages', [])
+                table.add_row("Components", f"{len(components)} files")
+                table.add_row("Pages", f"{len(pages)} files")
+        
+        # Component mapping
+        mapping = architecture_blueprint.get('mapping', {})
+        if mapping:
+            table.add_row("Legacy Files Mapped", str(len(mapping)))
+        
+        # Routing structure
+        routing = architecture_blueprint.get('routing', [])
+        if routing:
+            table.add_row("Routes", str(len(routing)))
+        
+        # Shared components
+        shared_components = architecture_blueprint.get('sharedComponents', [])
+        if shared_components:
+            table.add_row("Shared Components", ", ".join(shared_components))
+        
+        # Metadata
+        metadata = architecture_blueprint.get('metadata', {})
+        if metadata:
+            architecture_type = metadata.get('architecture_type', 'unknown')
+            total_pages = metadata.get('total_pages', 0)
+            total_components = metadata.get('total_components', 0)
+            table.add_row("Architecture Type", architecture_type.replace('_', ' ').title())
+            table.add_row("Total Pages", str(total_pages))
+            table.add_row("Total Components", str(total_components))
+        
+        self.console.print(table)
+        
+        # Show routing structure
+        if routing:
+            self.console.print("\n🛣️  Routing Structure:", style="bold blue")
+            for route in routing:
+                path = route.get('path', '')
+                component = route.get('component', '')
+                self.console.print(f"   • {path} → {component}", style="dim")
+        
+        # Show component mapping highlights
+        if mapping:
+            self.console.print("\n🗺️  Component Mapping:", style="bold blue")
+            for legacy_path, react_component in list(mapping.items())[:5]:  # Show first 5 mappings
+                legacy_name = legacy_path.split('/')[-1]
+                react_name = react_component.split('/')[-1]
+                self.console.print(f"   • {legacy_name} → {react_name}", style="dim")
         
         # Show patterns found
         if patterns:
@@ -1240,17 +1419,25 @@ class Legacy2ModernCLI:
             words = query.split()
             
             # Find input path
-            input_path = None
+            input_source = None
             framework = 'react'
             
             for i, word in enumerate(words):
+                # Check for GitHub URLs
+                if 'github.com' in word or word.startswith(('http://', 'https://')):
+                    input_source = word
+                    break
+                # Check for zip files
+                elif word.endswith('.zip'):
+                    input_source = word
+                    break
                 # Check for file paths
-                if os.path.exists(word) or word.endswith(('.html', '.htm', '.js', '.css')):
-                    input_path = word
+                elif os.path.exists(word) or word.endswith(('.html', '.htm', '.js', '.css')):
+                    input_source = word
                     break
                 # Check for directories
                 elif os.path.isdir(word):
-                    input_path = word
+                    input_source = word
                     break
             
             # Check for framework specification
@@ -1259,34 +1446,42 @@ class Legacy2ModernCLI:
                     framework = word.lower()
                     break
             
-            if input_path:
-                await self.start_modernization_workflow(input_path, framework)
+            if input_source:
+                await self.start_modernization_workflow(input_source, framework)
                 return
             else:
-                self.console.print("[#FFA500]Please specify an input path to modernize[/#FFA500]")
+                self.console.print("[#FFA500]Please specify an input source to modernize[/#FFA500]")
                 self.console.print("[#FFA500]Examples:[/#FFA500]")
                 self.console.print("[#FFA500]  - modernize my-website.html react[/#FFA500]")
-                self.console.print("[#FFA500]  - modernize legacy-project nextjs[/#FFA500]")
+                self.console.print("[#FFA500]  - modernize https://github.com/user/repo nextjs[/#FFA500]")
+                self.console.print("[#FFA500]  - modernize legacy-project.zip astro[/#FFA500]")
                 self.console.print("[#FFA500]Output will be automatically placed in sandbox[/#FFA500]")
             
         elif 'analyze' in query_lower or 'review' in query_lower:
             # Extract input from query
             words = query.split()
-            input_path = None
+            input_source = None
             
             for word in words:
-                if os.path.exists(word) or os.path.isdir(word):
-                    input_path = word
+                if 'github.com' in word or word.startswith(('http://', 'https://')):
+                    input_source = word
+                    break
+                elif word.endswith('.zip'):
+                    input_source = word
+                    break
+                elif os.path.exists(word) or os.path.isdir(word):
+                    input_source = word
                     break
             
-            if input_path:
-                await self.analyze_with_agents(input_path)
+            if input_source:
+                await self.analyze_with_agents(input_source)
                 return
             else:
-                self.console.print("[#FFA500]Please specify an input path to analyze[/#FFA500]")
+                self.console.print("[#FFA500]Please specify an input source to analyze[/#FFA500]")
                 self.console.print("[#FFA500]Examples:[/#FFA500]")
                 self.console.print("[#FFA500]  - analyze my-website.html[/#FFA500]")
-                self.console.print("[#FFA500]  - analyze legacy-project[/#FFA500]")
+                self.console.print("[#FFA500]  - analyze https://github.com/user/repo[/#FFA500]")
+                self.console.print("[#FFA500]  - analyze legacy-project.zip[/#FFA500]")
         
     def show_help(self):
         """Show help information."""
@@ -1311,9 +1506,11 @@ class Legacy2ModernCLI:
 
 [bold blue]Examples:[/bold blue]
   > modernize examples/website/legacy-site.html react
-  > /modernize examples/website/legacy-site.html nextjs
+  > /modernize https://github.com/nolan-lwin/Personal-Portfolio nextjs
+  > /modernize legacy-project.zip astro
   > analyze examples/website/legacy-site.html
-  > /analyze examples/website/legacy-site.html
+  > /analyze https://github.com/user/repo
+  > /analyze legacy-project.zip
   > status
   > /status
 

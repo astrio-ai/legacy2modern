@@ -34,7 +34,7 @@ class AI:
         provider: str = "openai",
         model: str = "gpt-4",
         max_retries: int = 3,
-        rate_limit_delay: float = 1.0,
+        rate_limit_delay: float = 2.0,  # Increased default delay
         max_tokens: int = 4000,
         temperature: float = 0.7
     ):
@@ -106,10 +106,20 @@ class AI:
                     return response.content[0].text
                     
             except Exception as e:
+                error_str = str(e)
                 logger.warning(f"API request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
+                
+                # Handle rate limiting specifically
+                if "429" in error_str or "rate_limit" in error_str.lower():
+                    wait_time = min(30, (2 ** attempt) * 5)  # Longer wait for rate limits
+                    logger.info(f"Rate limit hit, waiting {wait_time} seconds...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    # For other errors, use exponential backoff
+                    await asyncio.sleep(2 ** attempt)
+                
                 if attempt == self.max_retries - 1:
                     raise
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
     
     async def chat(
         self,

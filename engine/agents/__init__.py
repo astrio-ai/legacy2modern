@@ -8,7 +8,7 @@ using AutoGen framework for AI agent coordination and communication.
 # Core agents
 from .core_agents import (
     BaseAgent, BaseExecutionEnv, BaseMemory,
-    ParserAgent, ModernizerAgent, RefactorAgent, QAAgent, CoordinatorAgent
+    ParserAgent, ArchitectAgent, ModernizerAgent, RefactorAgent, QAAgent, CoordinatorAgent
 )
 
 # Utilities
@@ -31,6 +31,7 @@ __all__ = [
     'BaseExecutionEnv', 
     'BaseMemory',
     'ParserAgent',
+    'ArchitectAgent',
     'ModernizerAgent',
     'RefactorAgent',
     'QAAgent',

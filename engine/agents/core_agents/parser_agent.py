@@ -4,6 +4,7 @@ Parser Agent - Reads legacy project, understands structure, builds map.
 
 import logging
 from typing import Dict, List, Optional, Any
+from pathlib import Path
 from .base_agent import BaseAgent, AgentRole
 from ..utilities.prompt import PromptContext
 
@@ -15,10 +16,11 @@ class ParserAgent(BaseAgent):
     
     This agent is responsible for:
     - Reading and analyzing legacy project files
-    - Understanding project structure and architecture
+    - Understanding project structure and content
     - Identifying patterns, dependencies, and relationships
     - Building comprehensive project maps
     - Extracting business logic and functionality
+    - Providing raw analysis data for the Architect Agent
     """
     
     def __init__(self, ai, memory, config, **kwargs):
@@ -38,7 +40,7 @@ class ParserAgent(BaseAgent):
         self.project_map = {}
         self.file_analyses = {}
         self.dependency_graph = {}
-        self.architecture_patterns = []
+        self.patterns = []
         
     def _get_default_system_prompt(self) -> str:
         """Return the default system prompt for the parser agent."""
@@ -64,7 +66,7 @@ You should be thorough, analytical, and provide detailed insights about the code
         elif message_type == 'build_dependency_map':
             return await self._build_dependency_map()
         elif message_type == 'extract_patterns':
-            return await self._extract_architecture_patterns()
+            return await self._extract_patterns()
         elif message_type == 'get_project_summary':
             return await self._get_project_summary()
         else:
@@ -97,8 +99,31 @@ You should be thorough, analytical, and provide detailed insights about the code
             self.state.current_task = "full_analysis"
             self.update_progress(0.1)
             
-            # Get project path
+            # Get project path or input source
             project_path = task.get('project_path', '.')
+            input_source = task.get('input_source', project_path)
+            
+            # Step 0: Prepare project using repository handler
+            logger.info("Preparing project for analysis")
+            from ..utilities.repository_handler import RepositoryHandler
+            repo_handler = RepositoryHandler()
+            
+            try:
+                project_prep = repo_handler.prepare_project(input_source)
+                if not project_prep.get('success', False):
+                    raise Exception(f"Failed to prepare project: {project_prep.get('error', 'Unknown error')}")
+                
+                # Use the prepared project path
+                project_path = project_prep['project_path']
+                project_info = project_prep['project_info']
+                
+                logger.info(f"Project prepared successfully: {project_prep['project_type']}")
+                logger.info(f"Project path: {project_path}")
+                
+            except Exception as e:
+                logger.warning(f"Repository handler failed, falling back to direct path: {e}")
+                # Fallback to direct path handling
+                project_info = None
             
             # Step 1: Scan project structure
             logger.info("Starting project structure scan")
@@ -116,7 +141,7 @@ You should be thorough, analytical, and provide detailed insights about the code
             self.update_progress(0.8)
             
             # Step 4: Extract patterns
-            logger.info("Extracting architecture patterns")
+            logger.info("Extracting patterns")
             patterns = await self._extract_comprehensive_patterns(file_analyses)
             self.update_progress(0.9)
             
@@ -131,7 +156,9 @@ You should be thorough, analytical, and provide detailed insights about the code
                 'file_analyses': file_analyses,
                 'dependencies': dependencies,
                 'patterns': patterns,
-                'summary': summary
+                'summary': summary,
+                'project_info': project_info,
+                'repository_info': project_prep if 'project_prep' in locals() else None
             }
             
             # Save to memory
@@ -178,11 +205,40 @@ You should be thorough, analytical, and provide detailed insights about the code
         """Analyze all files in the project."""
         file_analyses = {}
         
+        # Define binary file extensions that should be skipped from analysis
+        binary_extensions = {
+            # Images
+            '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff', '.tif',
+            # Videos
+            '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.m4v',
+            # Audio
+            '.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg', '.wma',
+            # Documents
+            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+            # Archives
+            '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2',
+            # Other binary
+            '.exe', '.dll', '.so', '.dylib', '.bin', '.ttf'
+        }
+        
         for i, file_path in enumerate(files):
             try:
                 logger.debug(f"Analyzing file {i+1}/{len(files)}: {file_path}")
                 
-                # Read file content
+                # Check if file is binary and should be skipped
+                file_ext = Path(file_path).suffix.lower()
+                if file_ext in binary_extensions:
+                    # Skip analysis for binary files - they will be used as-is
+                    file_analyses[file_path] = {
+                        'status': 'skipped',
+                        'reason': f'Binary file ({file_ext}) - will be used as-is',
+                        'file_type': 'binary',
+                        'file_extension': file_ext,
+                        'preserve': True  # Flag to preserve this file in modernization
+                    }
+                    continue
+                
+                # Read file content for text files
                 content = await self._read_file_content(file_path)
                 
                 # Analyze file
@@ -204,6 +260,84 @@ You should be thorough, analytical, and provide detailed insights about the code
     
     async def _analyze_single_file_content(self, file_path: str, content: str) -> Dict[str, Any]:
         """Analyze a single file's content."""
+        try:
+            # Check if this is an HTML file that might contain virtual pages
+            if file_path.lower().endswith('.html'):
+                # Use HTML section detector for HTML files
+                analysis = await self._analyze_html_file(file_path, content)
+            else:
+                # Use AI analysis for other file types
+                analysis = await self._analyze_with_ai(file_path, content)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing file {file_path}: {e}")
+            return {
+                'error': str(e),
+                'status': 'failed',
+                'file_path': file_path
+            }
+    
+    async def _analyze_html_file(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Analyze HTML file with section detection."""
+        try:
+            # Import HTML section detector
+            from ..utilities.html_section_detector import HTMLSectionDetector
+            
+            detector = HTMLSectionDetector()
+            section_data = detector.detect_virtual_pages(content, file_path)
+            
+            # Build context for additional AI analysis
+            context = PromptContext(
+                project_name=self.config.get_project_name(),
+                target_stack=self.config.get_target_stack(),
+                current_task="html_analysis",
+                file_content=content,
+                file_path=file_path,
+                user_requirements="Analyze this HTML file and understand its purpose, structure, and functionality"
+            )
+            
+            # Build prompt
+            prompt_result = self.prompt_builder.build_modernization_prompt(
+                context, task_type="parsing"
+            )
+            
+            # Get AI analysis for additional insights
+            analysis_response = await self.ai.chat(
+                messages=[{'role': 'user', 'content': prompt_result.user_prompt}],
+                system_prompt=prompt_result.system_prompt
+            )
+            
+            # Combine section detection with AI analysis
+            analysis = {
+                'file_path': file_path,
+                'status': 'success',
+                'content_length': len(content),
+                'file_type': 'html',
+                'section_detection': section_data,
+                'ai_analysis': analysis_response,
+                'dependencies': self._extract_dependencies_from_response(analysis_response),
+                'patterns': self._extract_patterns_from_response(analysis_response),
+                'functionality': self._extract_functionality_from_response(analysis_response),
+                'is_single_page_multi_section': section_data.get('is_single_page', False),
+                'virtual_pages': section_data.get('pages', []),
+                'shared_components': section_data.get('components', []),
+                'assets': section_data.get('assets', {})
+            }
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing HTML file {file_path}: {e}")
+            return {
+                'file_path': file_path,
+                'status': 'failed',
+                'error': str(e)
+            }
+    
+    async def _analyze_with_ai(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Analyze non-HTML file with AI."""
         try:
             # Build context for analysis
             context = PromptContext(
@@ -230,6 +364,14 @@ You should be thorough, analytical, and provide detailed insights about the code
             analysis = self._parse_file_analysis(analysis_response, file_path, content)
             
             return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing file with AI {file_path}: {e}")
+            return {
+                'file_path': file_path,
+                'status': 'failed',
+                'error': str(e)
+            }
             
         except Exception as e:
             logger.error(f"Error analyzing file {file_path}: {e}")
@@ -262,7 +404,7 @@ You should be thorough, analytical, and provide detailed insights about the code
         return dependencies
     
     async def _extract_comprehensive_patterns(self, file_analyses: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract comprehensive architecture patterns from file analyses."""
+        """Extract comprehensive patterns from file analyses."""
         patterns = []
         
         # Collect patterns from all files
@@ -451,16 +593,30 @@ You should be thorough, analytical, and provide detailed insights about the code
         files = []
         project_path = Path(project_path)
         
+        # Define directories to skip (performance optimization)
+        skip_dirs = {
+            '.git', '__pycache__', 'node_modules', '.DS_Store', 
+            '.next', '.nuxt', 'dist', 'build', 'out', 'coverage',
+            '.nyc_output', '.cache', 'tmp', 'temp', 'logs',
+            'vendor', 'bower_components', '.pytest_cache',
+            '.mypy_cache', '.tox', '.venv', 'venv', 'env',
+            'target', '.gradle', '.idea', '.vscode'
+        }
+        
         if project_path.is_file():
             # If it's a single file, return just that file
             return [str(project_path)]
         elif project_path.is_dir():
             # If it's a directory, scan for files
             for root, dirs, filenames in os.walk(project_path):
+                # Skip unnecessary directories for performance
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+                
                 for filename in filenames:
                     file_path = Path(root) / filename
-                    # Skip hidden files and common ignore patterns
-                    if not filename.startswith('.') and not filename.endswith(('.pyc', '.DS_Store')):
+                    # Skip hidden files and common build artifacts
+                    if (not filename.startswith('.') and 
+                        not filename.endswith(('.pyc', '.DS_Store', '.log', '.tmp', '.temp'))):
                         files.append(str(file_path))
         else:
             # If path doesn't exist, return empty list
@@ -510,10 +666,19 @@ You should be thorough, analytical, and provide detailed insights about the code
         return structure
     
     async def _read_file_content(self, file_path: str) -> str:
-        """Read file content."""
+        """Read file content for text files only."""
         try:
+            # Try to read as text with UTF-8
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
+        except UnicodeDecodeError:
+            # If UTF-8 fails, try other encodings
+            try:
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning(f"Could not read file {file_path} as text: {e}")
+                return f"[Unreadable file] - Skipped for analysis"
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {e}")
             return f"Error reading file: {e}"
@@ -560,8 +725,8 @@ You should be thorough, analytical, and provide detailed insights about the code
         
         return await self._build_comprehensive_dependency_map(self.file_analyses)
     
-    async def _extract_architecture_patterns(self) -> List[Dict[str, Any]]:
-        """Extract architecture patterns from current analyses."""
+    async def _extract_patterns(self) -> List[Dict[str, Any]]:
+        """Extract patterns from current analyses."""
         if not self.file_analyses:
             return []
         

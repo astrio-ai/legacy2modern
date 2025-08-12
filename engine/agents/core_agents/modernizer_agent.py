@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from .base_agent import BaseAgent, AgentRole
 from ..utilities.prompt import PromptContext
+from ..utilities.icon_handler import IconHandler
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class ModernizerAgent(BaseAgent):
         # Initialize prompt builder
         from ..utilities.prompt import PromptBuilder
         self.prompt_builder = PromptBuilder()
+        
+        # Initialize icon handler
+        self.icon_handler = IconHandler()
         
         self.generated_files = {}
         self.templates_used = {}
@@ -95,7 +99,15 @@ You should focus on creating high-quality, production-ready code that follows mo
             self.state.current_task = "full_modernization"
             self.update_progress(0.1)
             
-            # Get project map from parser agent
+            # Get architecture blueprint from architect agent
+            architecture_blueprint = await self.memory.get('architecture_blueprint', {})
+            if not architecture_blueprint:
+                return {
+                    'success': False,
+                    'error': 'No architecture blueprint available. Run architect agent first.'
+                }
+            
+            # Get project map from parser agent for content analysis
             project_map = await self.memory.get('project_map', {})
             if not project_map:
                 return {
@@ -106,24 +118,21 @@ You should focus on creating high-quality, production-ready code that follows mo
             target_stack = self.config.get_target_stack()
             self.update_progress(0.2)
             
-            # Step 1: Generate project structure
-            logger.info("Generating modern project structure")
-            project_structure = await self._generate_modern_project_structure(project_map, target_stack)
-            self.update_progress(0.4)
-            
-            # Step 2: Generate components (skip legacy file conversion)
-            logger.info("Generating modern components")
-            components = await self._generate_modern_components(project_map, target_stack)
+            # Step 1: Generate components based on architecture blueprint
+            logger.info("Generating modern components from architecture blueprint")
+            components = await self._generate_modern_components_from_blueprint(
+                architecture_blueprint, project_map, target_stack
+            )
             self.update_progress(0.7)
             
-            # Step 3: Create configuration files
+            # Step 2: Create configuration files
             logger.info("Creating configuration files")
             config_files = await self._create_configuration_files(target_stack)
             self.update_progress(1.0)
             
-            # Combine all results (no converted_files since we're using modern components)
+            # Combine all results
             modernization_result = {
-                'project_structure': project_structure,
+                'architecture_blueprint': architecture_blueprint,
                 'components': components,
                 'config_files': config_files,
                 'target_stack': target_stack
@@ -146,146 +155,29 @@ You should focus on creating high-quality, production-ready code that follows mo
                 'error': str(e)
             }
     
-    async def _generate_modern_project_structure(self, project_map: Dict, target_stack: str) -> Dict[str, Any]:
-        """Generate modern project structure based on target stack."""
-        try:
-            # Build context for structure generation
-            context = PromptContext(
-                project_name=self.config.get_project_name(),
-                target_stack=target_stack,
-                current_task="project_structure_generation",
-                user_requirements="Generate a modern project structure for the target stack"
-            )
-            
-            # Build prompt
-            prompt_result = self.prompt_builder.build_modernization_prompt(
-                context, task_type="generation"
-            )
-            
-            # Add project structure data
-            enhanced_prompt = f"{prompt_result.user_prompt}\n\nLegacy Project Structure:\n{str(project_map.get('structure', {}))}"
-            
-            # Get AI response
-            structure_response = await self.ai.chat(
-                messages=[{'role': 'user', 'content': enhanced_prompt}],
-                system_prompt=prompt_result.system_prompt
-            )
-            
-            # Parse and structure the response
-            modern_structure = self._parse_project_structure(structure_response, target_stack)
-            
-            return modern_structure
-            
-        except Exception as e:
-            logger.error(f"Error generating project structure: {e}")
-            raise
+
     
-    async def _convert_all_files(self, file_analyses: Dict, target_stack: str) -> Dict[str, Any]:
-        """Convert all legacy files to modern code."""
-        converted_files = {}
-        
-        for file_path, analysis in file_analyses.items():
-            if analysis.get('status') == 'success':
-                try:
-                    logger.debug(f"Converting file: {file_path}")
-                    
-                    # Convert file
-                    converted = await self._convert_single_file_content(file_path, analysis, target_stack)
-                    converted_files[file_path] = converted
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to convert {file_path}: {e}")
-                    converted_files[file_path] = {
-                        'error': str(e),
-                        'status': 'failed'
-                    }
-        
-        return converted_files
+
     
-    async def _convert_single_file_content(self, file_path: str, analysis: Dict, target_stack: str) -> Dict[str, Any]:
-        """Convert a single file's content to modern code."""
+    async def _generate_modern_components_from_blueprint(self, architecture_blueprint: Dict, project_map: Dict, target_stack: str) -> Dict[str, Any]:
+        """Generate modern components based on architecture blueprint."""
         try:
-            # Read the actual file content
-            with open(file_path, 'r', encoding='utf-8') as f:
-                file_content = f.read()
+            # Extract architecture information
+            folder_structure = architecture_blueprint.get('folderStructure', {})
+            component_mapping = architecture_blueprint.get('mapping', {})
+            routing_structure = architecture_blueprint.get('routing', [])
+            shared_components = architecture_blueprint.get('sharedComponents', [])
+            patterns = architecture_blueprint.get('patterns', [])  # Add patterns field
             
-            # Build context for conversion
-            context = PromptContext(
-                project_name=self.config.get_project_name(),
-                target_stack=target_stack,
-                current_task="file_conversion",
-                file_content=file_content,
-                file_path=file_path,
-                user_requirements=f"Convert this legacy file to modern {target_stack} code"
-            )
-            
-            # Build prompt
-            prompt_result = self.prompt_builder.build_code_generation_prompt(
-                context, target_stack, target_stack
-            )
-            
-            # Create a specific prompt for file conversion
-            conversion_prompt = f"""
-{prompt_result.user_prompt}
-
-LEGACY FILE TO CONVERT:
-File: {file_path}
-Content:
-{file_content}
-
-ANALYSIS:
-{analysis.get('analysis', 'No analysis available')}
-
-REQUIREMENTS:
-1. Convert this specific legacy file to modern {target_stack} code
-2. Replace all template variables with actual values
-3. Create meaningful component names based on the file content
-4. Implement the actual functionality from the legacy code
-5. Use modern best practices and patterns
-6. Generate complete, runnable code (not templates)
-
-IMPORTANT: Generate ONLY the actual code content. Do NOT include:
-- Markdown code blocks (```tsx, ```jsx, etc.)
-- Explanatory text or commentary
-- Numbered lists or step-by-step instructions
-- "Here's the code:" or similar phrases
-
-Provide ONLY the clean, runnable code that can be directly saved to a file.
-"""
-            
-            # Get AI conversion
-            conversion_response = await self.ai.chat(
-                messages=[{'role': 'user', 'content': conversion_prompt}],
-                system_prompt=prompt_result.system_prompt
-            )
-            
-            # Parse conversion response
-            converted = self._parse_file_conversion(conversion_response, file_path, target_stack)
-            
-            return converted
-            
-        except Exception as e:
-            logger.error(f"Error converting file {file_path}: {e}")
-            return {
-                'error': str(e),
-                'status': 'failed',
-                'file_path': file_path
-            }
-    
-    async def _generate_modern_components(self, project_map: Dict, target_stack: str) -> Dict[str, Any]:
-        """Generate modern components based on project analysis."""
-        try:
-            # Extract component requirements from project map
-            patterns = project_map.get('patterns', [])
-            dependencies = project_map.get('dependencies', {})
-            structure = project_map.get('structure', {})
+            # Extract project information for content analysis
+            file_analyses = project_map.get('file_analyses', {})
             
             # Build context for component generation
             context = PromptContext(
                 project_name=self.config.get_project_name(),
                 target_stack=target_stack,
-                current_task="component_generation",
-                user_requirements="Generate modern components based on the analyzed patterns and dependencies"
+                current_task="component_generation_from_blueprint",
+                user_requirements="Generate modern React components based on the architecture blueprint"
             )
             
             # Build prompt
@@ -293,38 +185,45 @@ Provide ONLY the clean, runnable code that can be directly saved to a file.
                 context, task_type="generation"
             )
             
-            # Create specific component generation prompt
+            # Create component generation prompt based on blueprint
             component_prompt = f"""
 {prompt_result.user_prompt}
 
-PROJECT ANALYSIS:
-Structure: {structure}
+ARCHITECTURE BLUEPRINT:
+Folder Structure: {folder_structure}
+Component Mapping: {component_mapping}
+Routing Structure: {routing_structure}
+Shared Components: {shared_components}
 Patterns: {patterns}
-Dependencies: {dependencies}
+
+LEGACY CONTENT ANALYSIS:
+{file_analyses}
 
 REQUIREMENTS:
-1. Generate specific React components based on the actual project structure
-2. Create separate components for: Navigation, Hero Section, Services Section, Contact Form, Footer
-3. Replace all template variables with actual values
-4. Implement the actual functionality from the legacy HTML
-5. Use modern React patterns and best practices
-6. Generate complete, runnable components (not templates)
+1. Generate components EXACTLY as specified in the architecture blueprint
+2. Follow the folder structure and file naming conventions
+3. Implement the routing structure as defined
+4. Create shared components as identified
+5. Use the legacy content analysis to implement actual functionality
+6. Use modern {target_stack} patterns and best practices
+7. Generate complete, runnable code (not templates)
 
-PROJECT STRUCTURE:
-Create a proper React project structure with the following files:
+COMPONENT GENERATION STRATEGY:
+- Generate each component file as specified in the mapping
+- Implement routing based on the routing structure
+- Create shared components for reuse across pages
+- Use Tailwind CSS for styling
+- Follow React best practices and conventions
 
-// src/App.jsx - Main App component
-// src/index.js - Entry point (REQUIRED for Create React App)
-// src/components/Navigation.jsx - Navigation component
-// src/components/Hero.jsx - Hero section component
-// src/components/Services.jsx - Services section component
-// src/components/ContactForm.jsx - Contact form component
-// src/components/Footer.jsx - Footer component
-// src/styles/globals.css - Global styles
-// public/index.html - HTML template
-// vite.config.js - Vite configuration
+IMPORTANT: You MUST generate SEPARATE component files with proper file headers.
 
-IMPORTANT: You MUST include the src/index.js file as it's required for Create React App to work.
+For each component file, start with a comment line like this:
+// src/components/Navigation.jsx
+// src/pages/Home.jsx
+// src/styles/globals.css
+// public/index.html
+
+Then provide the complete code for that component.
 
 IMPORTANT: Generate ONLY the actual code content. Do NOT include:
 - Markdown code blocks (```tsx, ```jsx, etc.)
@@ -333,7 +232,7 @@ IMPORTANT: Generate ONLY the actual code content. Do NOT include:
 - "Here's the code:" or similar phrases
 
 IMPORTANT: For CSS files:
-- Do NOT reference image files that don't exist (like /hero-bg.jpg)
+- Do NOT reference image files that don't exist
 - Use CSS gradients or solid colors instead of background images
 - Use Tailwind CSS classes when possible
 
@@ -342,7 +241,7 @@ IMPORTANT: For React components:
 - Add proper accessibility attributes (target="_blank", rel="noopener noreferrer")
 - Follow React best practices
 
-Provide ONLY the clean, runnable React components that can be directly saved to the proper directory structure.
+Provide ONLY the clean, runnable code that can be directly saved to the proper directory structure.
 """
             
             # Get AI response
@@ -357,11 +256,12 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
             return components
             
         except Exception as e:
-            logger.error(f"Error generating components: {e}")
+            logger.error(f"Error generating components from blueprint: {e}")
             return {
                 'error': str(e),
                 'status': 'failed'
             }
+
     
     async def _create_configuration_files(self, target_stack: str) -> Dict[str, Any]:
         """Create configuration files for the modern project."""
@@ -444,32 +344,21 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
                     "description": f"Modernized {project_name} using React",
                     "main": "src/index.js",
                     "scripts": {
-                        "start": "react-scripts start",
-                        "build": "react-scripts build",
-                        "test": "react-scripts test",
-                        "eject": "react-scripts eject"
+                        "dev": "vite",
+                        "build": "vite build",
+                        "preview": "vite preview"
                     },
                     "dependencies": {
                         "react": "^18.2.0",
                         "react-dom": "^18.2.0",
-                        "react-scripts": "5.0.1"
+                        "react-router-dom": "^6.16.0"
                     },
                     "devDependencies": {
-                        "@types/react": "^18.2.0",
-                        "@types/react-dom": "^18.2.0",
-                        "typescript": "^4.9.0"
-                    },
-                    "browserslist": {
-                        "production": [
-                            ">0.2%",
-                            "not dead",
-                            "not op_mini all"
-                        ],
-                        "development": [
-                            "last 1 chrome version",
-                            "last 1 firefox version",
-                            "last 1 safari version"
-                        ]
+                        "@vitejs/plugin-react": "^4.0.4",
+                        "autoprefixer": "^10.4.15",
+                        "postcss": "^8.4.29",
+                        "tailwindcss": "^3.3.3",
+                        "vite": "^4.4.9"
                     }
                 }
             else:
@@ -501,63 +390,9 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
                 'status': 'failed'
             }
     
-    def _parse_project_structure(self, response: str, target_stack: str) -> Dict[str, Any]:
-        """Parse the AI response for project structure."""
-        try:
-            # This is a simplified implementation
-            # In a real system, you'd use more sophisticated parsing
-            structure = {
-                'status': 'success',
-                'target_stack': target_stack,
-                'structure': response,
-                'directories': self._extract_directories_from_response(response),
-                'files': self._extract_files_from_response(response)
-            }
-            
-            return structure
-            
-        except Exception as e:
-            logger.error(f"Error parsing project structure: {e}")
-            return {
-                'status': 'failed',
-                'error': str(e)
-            }
+
     
-    def _parse_file_conversion(self, response: str, file_path: str, target_stack: str) -> Dict[str, Any]:
-        """Parse the AI response for file conversion."""
-        try:
-            from pathlib import Path
-            import re
-            
-            # Extract actual code content from LLM response
-            # Remove markdown code blocks and LLM commentary
-            code_content = self._extract_code_from_response(response)
-            
-            if not code_content:
-                return {
-                    'status': 'failed',
-                    'error': 'No code content found in response',
-                    'original_file': file_path
-                }
-            
-            converted = {
-                'status': 'success',
-                'original_file': file_path,
-                'target_stack': target_stack,
-                'converted_content': code_content,
-                'new_file_path': self._determine_new_file_path(file_path, target_stack),
-                'conversion_notes': self._extract_conversion_notes(response)
-            }
-            
-            return converted
-            
-        except Exception as e:
-            logger.error(f"Error parsing file conversion: {e}")
-            return {
-                'status': 'failed',
-                'error': str(e),
-                'original_file': file_path
-            }
+
     
     def _extract_code_from_response(self, response: str) -> str:
         """Extract actual code content from LLM response, removing markdown and commentary."""
@@ -711,78 +546,6 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
         
         return files
     
-    def _determine_new_file_path(self, original_path: str, target_stack: str) -> str:
-        """Determine the new file path for converted code."""
-        from pathlib import Path
-        
-        # Extract file name and extension
-        file_name = Path(original_path).stem
-        file_ext = Path(original_path).suffix
-        
-        # Map extensions to modern equivalents
-        extension_map = {
-            '.html': '.jsx' if target_stack == 'react' else '.js',
-            '.js': '.jsx' if target_stack == 'react' else '.js',
-            '.py': '.jsx' if target_stack == 'react' else '.js',
-            '.php': '.jsx' if target_stack == 'react' else '.js'
-        }
-        
-        new_ext = extension_map.get(file_ext, '.jsx' if target_stack == 'react' else '.js')
-        
-        # Create meaningful component name based on file content analysis
-        if file_ext == '.html':
-            # For HTML files, try to extract meaningful name from content
-            try:
-                with open(original_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    # Look for title tag
-                    import re
-                    title_match = re.search(r'<title[^>]*>([^<]+)</title>', content, re.IGNORECASE)
-                    if title_match:
-                        title = title_match.group(1).strip()
-                        # Clean up title for component name
-                        component_name = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-                        component_name = component_name.replace(' ', '').title()
-                        if component_name:
-                            return f"{component_name}{new_ext}"
-            except:
-                pass
-            
-            # Fallback for HTML files
-            if file_name.lower() in ['index', 'main', 'app', 'legacy-site']:
-                return f"App{new_ext}"
-            else:
-                return f"{file_name.title()}{new_ext}"
-        else:
-            # For other files, use the original name
-            component_name = file_name.replace('_', '').title()
-            if component_name.lower() in ['index', 'main', 'app']:
-                component_name = 'App'
-            
-            return f"{component_name}{new_ext}"
-    
-    def _extract_conversion_notes(self, response: str) -> List[str]:
-        """Extract conversion notes from AI response."""
-        # This is a simplified implementation
-        notes = []
-        
-        # Basic extraction logic
-        if 'note:' in response.lower() or 'todo:' in response.lower():
-            notes.append('Conversion notes extracted')
-        
-        return notes
-    
-    def _extract_component_list(self, response: str) -> List[str]:
-        """Extract component list from AI response."""
-        # This is a simplified implementation
-        components = []
-        
-        # Basic extraction logic
-        if 'component' in response.lower():
-            components.append('Component extracted')
-        
-        return components
-    
     def _extract_dependencies_from_package_json(self, response: str) -> Dict[str, str]:
         """Extract dependencies from package.json response."""
         # This is a simplified implementation
@@ -898,9 +661,7 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
             'generated_component': f'// Generated component: {component_name}'
         }
     
-    async def _generate_project_structure(self, project_map: Dict) -> Dict[str, Any]:
-        """Generate project structure from project map."""
-        return await self._generate_modern_project_structure(project_map, self.config.get_target_stack())
+
     
     async def _convert_single_file(self, task: Dict) -> Dict[str, Any]:
         """Convert a single file task."""
@@ -910,11 +671,256 @@ Provide ONLY the clean, runnable React components that can be directly saved to 
             task.get('target_stack', self.config.get_target_stack())
         )
     
+    async def _convert_single_file_content(self, file_path: str, analysis: Dict, target_stack: str) -> Dict[str, Any]:
+        """Convert a single file's content to modern code."""
+        try:
+            # Check if this is an HTML file with virtual pages
+            if file_path.lower().endswith('.html') and analysis.get('is_single_page_multi_section', False):
+                return await self._convert_html_with_sections(file_path, analysis, target_stack)
+            else:
+                return await self._convert_regular_file(file_path, analysis, target_stack)
+                
+        except Exception as e:
+            logger.error(f"Error converting file {file_path}: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'file_path': file_path
+            }
+    
+    async def _convert_html_with_sections(self, file_path: str, analysis: Dict, target_stack: str) -> Dict[str, Any]:
+        """Convert HTML file with virtual pages to modern components."""
+        try:
+            from ..utilities.html_section_detector import HTMLSectionDetector
+            
+            # Get section data
+            section_data = analysis.get('section_detection', {})
+            virtual_pages = section_data.get('pages', [])
+            shared_components = section_data.get('components', [])
+            
+            # Extract original HTML content
+            html_content = analysis.get('ai_analysis', '')
+            if not html_content:
+                # Try to get content from file
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        html_content = f.read()
+                except Exception as e:
+                    logger.error(f"Could not read HTML file {file_path}: {e}")
+                    return {
+                        'status': 'failed',
+                        'error': f'Could not read HTML file: {e}',
+                        'file_path': file_path
+                    }
+            
+            # Initialize section detector
+            detector = HTMLSectionDetector()
+            
+            # Generate components for each virtual page
+            generated_components = {}
+            
+            for page in virtual_pages:
+                page_name = page.get('name', 'Page')
+                selector = page.get('selector', '')
+                
+                # Extract section content
+                section_content = detector.extract_section_content(html_content, selector)
+                if section_content:
+                    # Convert section to React component
+                    component_code = await self._convert_html_section_to_react(
+                        section_content, page_name, target_stack
+                    )
+                    generated_components[f"src/pages/{page_name}.jsx"] = component_code
+            
+            # Generate shared components
+            for component in shared_components:
+                component_name = component.get('name', 'Component')
+                selector = component.get('selector', '')
+                
+                # Extract component content
+                component_content = detector.extract_section_content(html_content, selector)
+                if component_content:
+                    # Convert component to React component
+                    component_code = await self._convert_html_section_to_react(
+                        component_content, component_name, target_stack, is_component=True
+                    )
+                    generated_components[f"src/components/{component_name}.jsx"] = component_code
+            
+            return {
+                'status': 'success',
+                'file_path': file_path,
+                'generated_components': generated_components,
+                'virtual_pages': virtual_pages,
+                'shared_components': shared_components,
+                'target_stack': target_stack
+            }
+            
+        except Exception as e:
+            logger.error(f"Error converting HTML with sections {file_path}: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'file_path': file_path
+            }
+    
+    async def _convert_regular_file(self, file_path: str, analysis: Dict, target_stack: str) -> Dict[str, Any]:
+        """Convert a regular file to modern code."""
+        try:
+            # Build context for conversion
+            context = PromptContext(
+                project_name=self.config.get_project_name(),
+                target_stack=target_stack,
+                current_task="file_conversion",
+                file_content=analysis.get('analysis', ''),
+                file_path=file_path,
+                user_requirements="Convert this file to modern code using the target stack"
+            )
+            
+            # Build prompt
+            prompt_result = self.prompt_builder.build_modernization_prompt(
+                context, task_type="modernization"
+            )
+            
+            # Get AI conversion
+            conversion_response = await self.ai.chat(
+                messages=[{'role': 'user', 'content': prompt_result.user_prompt}],
+                system_prompt=prompt_result.system_prompt
+            )
+            
+            return {
+                'status': 'success',
+                'file_path': file_path,
+                'converted_content': conversion_response,
+                'target_stack': target_stack
+            }
+            
+        except Exception as e:
+            logger.error(f"Error converting regular file {file_path}: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'file_path': file_path
+            }
+    
+    async def _convert_html_section_to_react(self, html_content: str, component_name: str, 
+                                           target_stack: str, is_component: bool = False) -> str:
+        """Convert HTML section to React component."""
+        try:
+            # Build context for HTML to React conversion
+            context = PromptContext(
+                project_name=self.config.get_project_name(),
+                target_stack=target_stack,
+                current_task="html_to_react_conversion",
+                file_content=html_content,
+                file_path=f"{component_name}.html",
+                user_requirements=f"Convert this HTML section to a React component named {component_name}"
+            )
+            
+            # Build prompt
+            prompt_result = self.prompt_builder.build_modernization_prompt(
+                context, task_type="modernization"
+            )
+            
+            # Create specific prompt for HTML to React conversion
+            conversion_prompt = f"""
+{prompt_result.user_prompt}
+
+HTML CONTENT TO CONVERT:
+{html_content}
+
+REQUIREMENTS:
+1. Convert this HTML section to a React component named {component_name}
+2. Use modern React patterns and hooks
+3. Convert inline styles to Tailwind CSS classes
+4. Handle any JavaScript functionality with React hooks
+5. Make the component reusable and maintainable
+6. Add proper TypeScript types if using TypeScript
+7. Follow React best practices
+
+COMPONENT TYPE: {'Shared Component' if is_component else 'Page Component'}
+
+Generate ONLY the React component code, no explanations or markdown.
+"""
+            
+            # Get AI conversion
+            conversion_response = await self.ai.chat(
+                messages=[{'role': 'user', 'content': conversion_prompt}],
+                system_prompt=prompt_result.system_prompt
+            )
+            
+            return conversion_response
+            
+        except Exception as e:
+            logger.error(f"Error converting HTML section to React: {e}")
+            return f"// Error converting {component_name}: {e}"
+    
     async def _generate_components(self, task: Dict) -> Dict[str, Any]:
         """Generate components task."""
+        architecture_blueprint = task.get('architecture_blueprint', {})
         project_map = task.get('project_map', {})
-        return await self._generate_modern_components(project_map, self.config.get_target_stack())
+        return await self._generate_modern_components_from_blueprint(
+            architecture_blueprint, project_map, self.config.get_target_stack()
+        )
     
     async def _setup_modern_project(self, task: Dict) -> Dict[str, Any]:
         """Setup modern project task."""
-        return await self._create_configuration_files(self.config.get_target_stack()) 
+        return await self._create_configuration_files(self.config.get_target_stack())
+    
+    async def _modernize_icons(self, file_path: str, content: str, target_stack: str) -> Dict[str, Any]:
+        """Modernize icons in a file using the icon handler."""
+        try:
+            # Analyze icon usage in the file
+            icon_analysis = self.icon_handler.analyze_icon_usage(file_path, content)
+            
+            if not icon_analysis['icon_libraries'] and not icon_analysis['svg_elements']:
+                return {
+                    'status': 'success',
+                    'message': 'No icons found to modernize',
+                    'modernized_content': content
+                }
+            
+            # Generate modernization plan
+            modernization_plan = self.icon_handler.generate_modernization_plan([icon_analysis])
+            
+            # Apply icon library conversions
+            modernized_content = content
+            import_statements = []
+            
+            for library_name, icons in icon_analysis['icon_libraries'].items():
+                conversion_result = self.icon_handler.convert_icon_library_to_modern(
+                    library_name, icons, target_stack
+                )
+                
+                if conversion_result['status'] == 'success':
+                    # Add import statements
+                    import_statements.extend(conversion_result['imports'])
+                    
+                    # Replace icon usage in content
+                    for icon in conversion_result['icons']:
+                        old_usage = f'class="{icon["original_class"]}"'
+                        new_usage = icon['usage']
+                        modernized_content = modernized_content.replace(old_usage, new_usage)
+            
+            # Create SVG components for inline SVGs
+            svg_components = []
+            for svg_info in icon_analysis['svg_elements']:
+                component_result = self.icon_handler.convert_svg_to_component(svg_info)
+                if component_result['status'] == 'success':
+                    svg_components.append(component_result)
+            
+            return {
+                'status': 'success',
+                'modernized_content': modernized_content,
+                'import_statements': import_statements,
+                'svg_components': svg_components,
+                'package_dependencies': modernization_plan['package_dependencies'],
+                'analysis': icon_analysis
+            }
+            
+        except Exception as e:
+            logger.error(f"Error modernizing icons in {file_path}: {e}")
+            return {
+                'status': 'error',
+                'message': f'Failed to modernize icons: {str(e)}',
+                'modernized_content': content
+            } 

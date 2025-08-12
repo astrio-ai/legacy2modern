@@ -9,6 +9,7 @@ from .base_agent import BaseAgent, AgentRole, AgentState
 from .base_execution_env import BaseExecutionEnv
 from .base_memory import BaseMemory
 from .parser_agent import ParserAgent
+from .architect_agent import ArchitectAgent
 from .modernizer_agent import ModernizerAgent
 from .refactor_agent import RefactorAgent
 from .qa_agent import QAAgent
@@ -21,6 +22,7 @@ __all__ = [
     'BaseExecutionEnv',
     'BaseMemory',
     'ParserAgent',
+    'ArchitectAgent',
     'ModernizerAgent',
     'RefactorAgent',
     'QAAgent',

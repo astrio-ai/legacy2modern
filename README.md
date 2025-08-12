@@ -16,8 +16,8 @@ L2M is a local, open-source, and multi-agent AI legacy website modernizer.
 
 ### **Website Modernization** 🌐
 - **Multi-File Support**: Handle entire website codebases, not just single files
-- **Multiple Input Types**: Directories, ZIP archives, Git repositories, single files
-- **Framework Migration**: Convert to React, Next.js, or Astro with Tailwind CSS
+- **Multiple Input Types**: GitHub repositories, ZIP archives, local directories, single files
+- **Framework Migration**: Convert to React, Next.js, Astro, Vue, Svelte, or Angular
 - **Component Extraction**: Identify and extract reusable components
 - **Asset Optimization**: Analyze and optimize CSS, JS, and images
 - **Navigation Analysis**: Understand site structure and user flows
@@ -53,14 +53,14 @@ pip install -e .
 
 ### Modernize a Website
 ```bash
+# GitHub repository
+legacy2modern website https://github.com/nolan-lwin/Personal-Portfolio output/react-website
+
 # Local directory
 legacy2modern website ./legacy-website/ output/react-website
 
 # ZIP archive
 legacy2modern website website-backup.zip output/react-website
-
-# Git repository
-legacy2modern website https://github.com/user/legacy-website output/react-website
 
 # Single HTML file (for backward compatibility)
 legacy2modern website index.html output/react-website
@@ -70,17 +70,34 @@ legacy2modern website index.html output/react-website
 ```bash
 legacy2modern
 # Then use natural language commands:
-# "Modernize this website to React"
+# "Modernize https://github.com/nolan-lwin/Personal-Portfolio to React"
 # "Convert this legacy site to Next.js"
+# "Analyze https://github.com/user/repo"
 ```
 
 ## 🌐 Enhanced Website Modernization
 
-Legacy2Modern supports **entire website codebases** with intelligent multi-file analysis:
+Legacy2Modern supports **entire website codebases** with intelligent multi-file analysis and **GitHub repository handling**:
 
 ### **Supported Input Types**
 
-#### 1. **Local Directory** 📂
+#### 1. **GitHub Repository** 🐙
+```bash
+# Modernize a GitHub repository
+legacy2modern website https://github.com/nolan-lwin/Personal-Portfolio output/react-website
+
+# Analyze without modernizing
+legacy2modern analyze https://github.com/user/legacy-website
+```
+
+**Features:**
+- Automatic repository cloning
+- Project structure analysis
+- Metadata extraction (package.json, README)
+- File categorization and dependency mapping
+- Support for public repositories
+
+#### 2. **Local Directory** 📂
 ```
 legacy-website/
 ├── index.html          # Homepage

@@ -267,7 +267,10 @@ test_output/*.jsx
 test_output/*.tsx
 
 # Session-specific memory files
-memory/
+memory/memory.json
+
+# Hailee Portfolio Example
+examples/hailee-portfolio-website/
 
 # Utility scripts (optional)
 clean_output.py

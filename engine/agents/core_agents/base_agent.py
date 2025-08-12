@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class AgentRole(Enum):
     """Defines the role of each agent in the system."""
     PARSER = "parser"
+    ARCHITECT = "architect"
     MODERNIZER = "modernizer"
     REFACTOR = "refactor"
     QA = "qa"
