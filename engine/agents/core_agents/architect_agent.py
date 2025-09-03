@@ -106,6 +106,16 @@ You should focus on creating clean, scalable, and maintainable React architectur
                     'error': 'No parser output available. Run parser first.'
                 }
             
+            # Ensure parser_output has the expected structure
+            if not isinstance(parser_output, dict):
+                logger.warning(f"Parser output is not a dictionary: {type(parser_output)}")
+                parser_output = {}
+            
+            # Ensure patterns field exists
+            if 'patterns' not in parser_output:
+                logger.info("Adding missing patterns field to parser output")
+                parser_output['patterns'] = []
+            
             self.update_progress(0.2)
             
             # Analyze project structure
@@ -125,6 +135,10 @@ You should focus on creating clean, scalable, and maintainable React architectur
             self.update_progress(0.8)
             
             # Create comprehensive blueprint
+            # Ensure parser_output is a valid dictionary
+            if parser_output is None:
+                parser_output = {}
+            
             architecture_blueprint = {
                 'folderStructure': folder_structure,
                 'mapping': component_mapping,

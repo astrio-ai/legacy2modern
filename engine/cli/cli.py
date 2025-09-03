@@ -1299,6 +1299,7 @@ class Legacy2ModernCLI:
                 self.console.print(f"   • {legacy_name} → {react_name}", style="dim")
         
         # Show patterns found
+        patterns = architecture_blueprint.get('patterns', [])
         if patterns:
             self.console.print("\n🏗️  Architecture Patterns:", style="bold blue")
             for pattern in patterns[:3]:  # Show first 3 patterns
