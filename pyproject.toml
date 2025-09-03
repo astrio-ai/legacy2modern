@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "legacy2modern"
 version = "0.1.0"
-description = "AI-Powered Legacy Code Transpilation Engine with Modern CLI"
+description = "AI-Powered Legacy COBOL Transpilation Engine with Modern CLI"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [

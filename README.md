@@ -1,4 +1,4 @@
-# Legacy2Modern (L2M) — AI Legacy Code Transpilation Engine
+# Legacy2Modern (L2M) — AI Legacy COBOL Transpilation Engine
 
 <div align="center">
 
@@ -10,19 +10,16 @@
 
 ![L2M CLI Screenshot](./docs/assets/l2m-screenshot.png)
 
-Welcome to **Legacy2Modern (L2M)**, an open-source engine for transforming legacy source code into modern, maintainable software.
+Welcome to **Legacy2Modern (L2M)**, an open-source engine for transforming legacy COBOL code into modern, maintainable Python applications.
 
-L2M specializes in **intelligent transpilation** of legacy languages (starting with COBOL) and **website modernization** into modern frameworks. It combines the precision of AST-based parsing with the flexibility of template-driven code generation, optionally augmented by Large Language Models (LLMs).
+L2M specializes in **intelligent COBOL transpilation** into modern Python code. It combines the precision of ANTLR4-based parsing with the flexibility of template-driven code generation, augmented by Large Language Models (LLMs) for intelligent analysis and optimization.
 
-Whether you're modernizing COBOL business systems, migrating legacy websites to React/Next.js/Astro, or transforming decades-old enterprise code — L2M is built to help you do it **safely**, **accurately**, and **transparently**.
+Whether you're modernizing COBOL business systems, migrating legacy enterprise applications, or transforming decades-old mainframe code — L2M is built to help you do it **safely**, **accurately**, and **transparently**.
 
 ## ✨ Features
 
 * 🔄 **COBOL to Python Transpilation**  
   Translate COBOL programs into modern Python code with multiple transpilation approaches.
-
-* 🌐 **Legacy Website Modernization**  
-  Transform HTML + Bootstrap + jQuery + PHP websites into modern React, Next.js, or Astro applications.
 
 * 🖥️ **Modern CLI Interface**  
   Beautiful, interactive command-line interface with natural language commands and AI-powered analysis.
@@ -43,7 +40,6 @@ Whether you're modernizing COBOL business systems, migrating legacy websites to 
   - Direct COBOL → Python transpilation
   - IR-based transpilation with templates
   - Hybrid transpilation with LLM augmentation
-  - Static site modernization with framework selection
   - Extensible architecture for future languages
 
 * 🧪 **Comprehensive Testing Framework**  
@@ -147,8 +143,6 @@ legacy2modern
 
 # In the interactive mode:
 > transpile examples/cobol/HELLO.cobol
-> /transpile examples/cobol/HELLO.cobol
-> modernize examples/website/legacy-site.html
 > analyze the generated Python code
 > /help
 ```
@@ -272,7 +266,7 @@ legacy2modern/
 pytest
 
 # Run specific test file
-pytest tests/cobol_system/test_basic_transpilation.py
+pytest tests/static_site/test_website_modernization.py
 
 # Run with coverage
 pytest --cov=engine
@@ -286,8 +280,8 @@ We welcome all contributions — from fixing typos to adding new language suppor
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions, coding guidelines, and how to submit PRs.
 
 ### Good First Issues
-* Add support for more website frameworks
 * Add support for more COBOL constructs
+* Add support for more website frameworks
 * Create templates for other target languages (JavaScript, C++)
 * Improve error handling and reporting
 * Add more comprehensive test cases

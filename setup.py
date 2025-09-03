@@ -20,7 +20,7 @@ setup(
     version="0.1.0",
     author="Naing Oo Lwin",
     author_email="naingoolwin.astrio@gmail.com",
-    description="AI-Powered Legacy Code Transpilation Engine with Modern CLI",
+    description="AI-Powered Legacy COBOL Transpilation Engine with Modern CLI",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/astrio-ai/legacy2modern",
